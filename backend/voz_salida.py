@@ -1,28 +1,50 @@
 """
-Salida de voz (texto -> voz) offline, usando pyttsx3. Corre en un hilo
-dedicado con una cola, para no bloquear la ventana de arcade y para que un
-mensaje no interrumpa al anterior a medias.
+Salida de voz (texto -> voz) offline, usando XTTS-v2 local. 
+Clona una voz a partir de un archivo .wav de muestra.
+Corre en un hilo dedicado con una cola para no bloquear la telemetría.
 """
 import threading
 import queue
+import os
+import subprocess
 
 try:
-    import pyttsx3
-    _PYTTSX3_DISPONIBLE = True
-except ImportError:
-    _PYTTSX3_DISPONIBLE = False
-
+    from TTS.api import TTS
+    import torch
+    # --- AJUSTE DE SEGURIDAD PARA PYTORCH 2.6+ ---
+    from TTS.tts.configs.xtts_config import XttsConfig
+    torch.serialization.add_safe_globals([XttsConfig])
+    # ---------------------------------------------
+    _TTS_DISPONIBLE = True
+except ImportError as e:
+    print(f"⚠️ Alerta de telemetría: Error real al importar TTS: {e}")
+    _TTS_DISPONIBLE = False
 
 class SalidaDeVoz:
-    def __init__(self, velocidad=175):
-        self.disponible = _PYTTSX3_DISPONIBLE
+    def __init__(self, archivo_muestra="closs_sample.wav"):
+        self.disponible = _TTS_DISPONIBLE
         self._cola = queue.Queue()
+        self.archivo_muestra = archivo_muestra
+        self.archivo_salida = "respuesta_ingeniero.wav"
 
         if not self.disponible:
-            print("⚠️ Salida de voz deshabilitada: falta instalar el paquete 'pyttsx3'.")
+            print("⚠️ Salida de voz deshabilitada: falta instalar 'TTS'. Ejecuta: pip install TTS")
+            return
+            
+        if not os.path.exists(self.archivo_muestra):
+            print(f"⚠️ Error: No se encontró el audio de muestra '{self.archivo_muestra}' para clonar la voz.")
+            self.disponible = False
             return
 
-        self._velocidad = velocidad
+        print("🔧 Calentando neumáticos... Cargando modelo XTTS-v2 (esto puede tardar unos segundos)...")
+        
+        # Desactivamos el dispositivo MPS de Apple por incompatibilidad de tensores 
+        # y forzamos el uso de la CPU.
+        device = "cpu"
+        self.tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        
+        print("✅ Motor de voz cargado y listo.")
+
         hilo = threading.Thread(target=self._worker, daemon=True)
         hilo.start()
 
@@ -32,18 +54,21 @@ class SalidaDeVoz:
         self._cola.put(texto)
 
     def _worker(self):
-        # OJO: en macOS (driver 'nsss' de pyttsx3), reusar la MISMA instancia del
-        # motor entre varios mensajes se cuelga después del primer runAndWait() —
-        # es un bug conocido de pyttsx3. La solución es crear una instancia NUEVA
-        # del motor para cada mensaje en vez de reutilizar una persistente.
         while True:
             texto = self._cola.get()
             try:
-                motor = pyttsx3.init()
-                motor.setProperty('rate', self._velocidad)
-                motor.say(texto)
-                motor.runAndWait()
-                motor.stop()
-                del motor
+                # 1. Genera el audio clonado y lo guarda temporalmente
+                self.tts.tts_to_file(
+                    text=texto,
+                    speaker_wav=self.archivo_muestra,
+                    language="es", # Español
+                    file_path=self.archivo_salida
+                )
+                
+                # 2. Reproduce el audio generado usando el comando nativo de Mac (afplay)
+                subprocess.run(["afplay", self.archivo_salida])
+                
             except Exception as e:
-                print(f"⚠️ Error en texto a voz: {e}")
+                print(f"⚠️ Error generando la voz clonada: {e}")
+            finally:
+                self._cola.task_done()

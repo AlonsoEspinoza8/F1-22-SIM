@@ -6,6 +6,7 @@ cd "/Users/alonsoespinozacorrea/F1-22-SIM"
 # Activar el entorno virtual
 python3 -m venv venv
 source venv/bin/activate    
+pip install --upgrade pip
 pip install -r requirements.txt
 
 # --- Asegurar que Ollama esté corriendo y que el modelo del ingeniero esté descargado ---
