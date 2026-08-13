@@ -1,5 +1,6 @@
 import socket
 import struct
+import time
 from tabulate import tabulate
 import traceback
 
@@ -17,9 +18,27 @@ class Race:
         self.drivers = {} 
         self.player_car_index = 0
         self.track_name = "Esperando..."
+        self.track_id = -1
         self.longitud_pista = 5000.0
 
+        # --- ESTADO DE LA SESIÓN / FIN DE CARRERA ---
+        self.session_uid = None
+        self.carrera_terminada = False
+        self.momento_fin_carrera = None
+        self.GRACIA_MENSAJE_FIN_S = 5  # segundos mínimos que el aviso se mantiene visible
+
+        # Mapeo de trackId (paquete de sesión) a nombre de circuito
+        self.FASTF1_TRACK_DICT = {
+            0: "Australia", 1: "France", 2: "China", 3: "Bahrain",
+            4: "Spain", 5: "Monaco", 6: "Canada", 7: "Great Britain", 8: "Germany",
+            9: "Hungary", 10: "Belgium", 11: "Italy", 12: "Singapore",
+            13: "Japan", 14: "Abu Dhabi", 15: "United States", 16: "Brazil", 17: "Austria",
+            18: "Russia", 19: "Mexico", 20: "Azerbaijan", 26: "Netherlands",
+            27: "Emilia Romagna", 28: "Portugal", 29: "Saudi Arabia", 30: "Miami"
+        }
+
     def actualizar_telemetria(self):
+        terminada_en_este_ciclo = False
         try:
             while True:
                 packet_data, addr = self.sock.recvfrom(2048)
@@ -28,6 +47,26 @@ class Race:
                 
                 packet_id = unpacked_header[4]
                 self.player_car_index = unpacked_header[8]
+
+                # --- DETECCIÓN DE SESIÓN NUEVA (sessionUID cambia entre practica/quali/carrera) ---
+                # No reseteamos el aviso de fin de carrera si: (a) se acaba de activar en ESTE
+                # mismo ciclo de lectura (el juego puede mandar paquetes de la sesión siguiente
+                # mezclados con el de Final Classification), o (b) todavía no pasó el tiempo
+                # mínimo de gracia — así el mensaje siempre alcanza a mostrarse en pantalla.
+                nuevo_session_uid = unpacked_header[5]
+                if self.session_uid is not None and nuevo_session_uid != self.session_uid:
+                    tiempo_desde_fin = (
+                        time.time() - self.momento_fin_carrera
+                        if self.momento_fin_carrera is not None else None
+                    )
+                    puede_resetear = (
+                        not terminada_en_este_ciclo
+                        and (tiempo_desde_fin is None or tiempo_desde_fin > self.GRACIA_MENSAJE_FIN_S)
+                    )
+                    if puede_resetear:
+                        self.carrera_terminada = False
+                        self.momento_fin_carrera = None
+                self.session_uid = nuevo_session_uid
 
                 # # --- NUEVO RADAR ---
                 # if packet_id == 6:
@@ -42,11 +81,24 @@ class Race:
                         unpacked = struct.unpack(session_format, session_data)
                         self.longitud_pista = unpacked[4]
 
+                        nuevo_track_id = unpacked[6]
+                        if nuevo_track_id != self.track_id:
+                            self.track_id = nuevo_track_id
+                            self.track_name = self.FASTF1_TRACK_DICT.get(nuevo_track_id, f"Track {nuevo_track_id}")
+
                 elif packet_id == 4:
                     self.get_race_participants(packet_data)
 
-                elif packet_id in [0, 2, 6] and self.drivers:
-                    sizes = {0: 60, 2: 43, 6: 60}
+                elif packet_id == 8:
+                    # Final Classification: el juego lo envía una sola vez, justo al terminar la carrera.
+                    if not self.carrera_terminada:
+                        self.carrera_terminada = True
+                        self.momento_fin_carrera = time.time()
+                        terminada_en_este_ciclo = True
+                        self._lanzar_analisis_curvas()
+
+                elif packet_id in [0, 2, 6, 10] and self.drivers:
+                    sizes = {0: 60, 2: 43, 6: 60, 10: 42}
                     size_car = sizes[packet_id]
                     
                     for i in range(22):
@@ -59,6 +111,8 @@ class Race:
                                 elif packet_id == 2: self.drivers[i].get_driver_lap_data(car_block)
                                 elif packet_id == 6: 
                                     self.drivers[i].get_driver_car_telemetry(car_block, self.player_car_index)
+                                elif packet_id == 10:
+                                    self.drivers[i].get_driver_car_damage(car_block)
                 
 
         except BlockingIOError:
@@ -99,6 +153,48 @@ class Race:
         pilotos_activos = [d for d in self.drivers.values() if getattr(d, 'posicion', 0) > 0]
         return sorted(pilotos_activos, key=lambda x: x.posicion)
 
+    def get_top_pilotos(self, n=5):
+        """Devuelve los N pilotos mejor clasificados según la posición actual de carrera."""
+        return self.get_leaderboard()[:n]
+
+    def _lanzar_analisis_curvas(self):
+        """Al terminar la carrera, genera en segundo plano los gráficos comparativos por curva."""
+        try:
+            from backend.analisis_curvas import generar_graficos_async
+            generar_graficos_async(self)
+        except Exception as e:
+            print(f"⚠️ No se pudo iniciar el análisis de curvas: {e}")
+
+    def get_race_best_sectors(self):
+        """
+        Recorre el historial de vueltas de TODOS los pilotos (no solo el jugador)
+        y devuelve el mejor tiempo registrado en la carrera para cada sector y vuelta completa.
+        """
+        mejor_s1, mejor_s2, mejor_s3, mejor_vuelta = 0, 0, 0, 0
+
+        for piloto in self.drivers.values():
+            for vuelta in getattr(piloto, 'historial_vueltas', []):
+                s1 = vuelta.get("sector_1_ms", 0)
+                s2 = vuelta.get("sector_2_ms", 0)
+                s3 = vuelta.get("sector_3_ms", 0)
+                total = vuelta.get("tiempo_total_ms", 0)
+
+                if s1 > 0 and (mejor_s1 == 0 or s1 < mejor_s1):
+                    mejor_s1 = s1
+                if s2 > 0 and (mejor_s2 == 0 or s2 < mejor_s2):
+                    mejor_s2 = s2
+                if s3 > 0 and (mejor_s3 == 0 or s3 < mejor_s3):
+                    mejor_s3 = s3
+                if total > 0 and (mejor_vuelta == 0 or total < mejor_vuelta):
+                    mejor_vuelta = total
+
+        return {
+            "sector_1_ms": mejor_s1,
+            "sector_2_ms": mejor_s2,
+            "sector_3_ms": mejor_s3,
+            "vuelta_ms": mejor_vuelta
+        }
+
     def get_player_gaps(self):
         if self.player_car_index not in self.drivers: return None
         yo = self.drivers[self.player_car_index]
@@ -122,54 +218,3 @@ class Race:
             gaps["gap_atras_m"] = abs(yo.distancia - p_atras.distancia)
 
         return gaps
-
-    def imprimir_resumen_carrera(self):
-        """
-        Genera y muestra una tabla ordenada en la terminal con la clasificación actual,
-        incluyendo la telemetría en vivo.
-        """
-        pilotos = self.get_leaderboard()
-        
-        if not pilotos:
-            return 
-            
-        datos_tabla = []
-        
-        for p in pilotos:
-            # ¡LA CLAVE!: Extraemos la velocidad usando la palabra en español exacta
-            velocidad_actual = getattr(p, 'velocidad', 0)
-            
-            fila = [
-                p.posicion,
-                getattr(p, 'nombre', f"Piloto {p.driverId}"),
-                p.teamId,
-                p.car_index,
-                f"{velocidad_actual} km/h"  # Añadimos la velocidad a la fila de tabulate
-            ]
-            datos_tabla.append(fila)
-            
-        # Actualizamos los encabezados para incluir la nueva columna
-        encabezados = ["POS", "PILOTO", "TEAM ID", "CAR INDEX", "VELOCIDAD"]
-        
-        print("\n=== CLASIFICACIÓN EN VIVO ===")
-        print(tabulate(datos_tabla, headers=encabezados, tablefmt="fancy_grid", numalign="center", stralign="center"))
-        
-        # Dashboard del jugador
-        gaps = self.get_player_gaps()
-        if gaps:
-            yo = self.drivers[self.player_car_index]
-            
-            # Nuevamente, usamos el español para tus pedales
-            velocidad = getattr(yo, 'velocidad', 0)
-            aceleracion = getattr(yo, 'acelerador', 0.0)
-            freno = getattr(yo, 'freno', 0.0)
-            
-            acel_pct = int(aceleracion * 100) if aceleracion <= 1.0 else int(aceleracion)
-            freno_pct = int(freno * 100) if freno <= 1.0 else int(freno)
-
-            print("\n--- INFORME DE INGENIERO ---")
-            print(f"Tu Posición : P{gaps['mi_posicion']}")
-            print(f"P. Delante  : {gaps['piloto_adelante']} a {gaps['gap_adelante_m']:.1f} m")
-            print(f"P. Detrás   : {gaps['piloto_atras']} a {gaps['gap_atras_m']:.1f} m")
-            print(f"Telemetría  : {velocidad} km/h | Acel: {acel_pct}% | Freno: {freno_pct}%")
-        print("=============================\n")

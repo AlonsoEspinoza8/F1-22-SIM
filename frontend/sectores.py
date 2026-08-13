@@ -63,9 +63,16 @@ class TiemposSectoresPanel(PanelUI):
         s3_mostrar = formato_f1(s3_last)
         total_mostrar = formato_f1(total_last)
 
+        # Mejores tiempos de LA CARRERA (todos los pilotos), calculados en el backend
+        race_best = self.backend.get_race_best_sectors() if self.backend else {}
+        race_s1 = formato_f1(race_best.get("sector_1_ms", 0))
+        race_s2 = formato_f1(race_best.get("sector_2_ms", 0))
+        race_s3 = formato_f1(race_best.get("sector_3_ms", 0))
+        race_vuelta = formato_f1(race_best.get("vuelta_ms", 0))
+
         # Imprimimos los datos en pantalla
-        arcade.draw_text(f"Sector 1 | {s1_mostrar} | {formato_f1(mejor_s1)} | --", 70, 690, arcade.color.WHITE, 11)
-        arcade.draw_text(f"Sector 2 | {s2_mostrar} | {formato_f1(mejor_s2)} | --", 70, 660, arcade.color.WHITE, 11)
-        arcade.draw_text(f"Sector 3 | {s3_mostrar} | {formato_f1(mejor_s3)} | --", 70, 630, arcade.color.WHITE, 11)
+        arcade.draw_text(f"Sector 1 | {s1_mostrar} | {formato_f1(mejor_s1)} | {race_s1}", 70, 690, arcade.color.WHITE, 11)
+        arcade.draw_text(f"Sector 2 | {s2_mostrar} | {formato_f1(mejor_s2)} | {race_s2}", 70, 660, arcade.color.WHITE, 11)
+        arcade.draw_text(f"Sector 3 | {s3_mostrar} | {formato_f1(mejor_s3)} | {race_s3}", 70, 630, arcade.color.WHITE, 11)
         
-        arcade.draw_text(f"Total | {total_mostrar} | {formato_f1(mejor_vuelta)} | --", 70, 600, arcade.color.YELLOW, 11, bold=True)
+        arcade.draw_text(f"Total | {total_mostrar} | {formato_f1(mejor_vuelta)} | {race_vuelta}", 70, 600, arcade.color.YELLOW, 11, bold=True)

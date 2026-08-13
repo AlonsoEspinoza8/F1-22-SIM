@@ -1,10 +1,12 @@
 #!/bin/bash
 
 # Navegar a la carpeta del proyecto
-cd "/Users/alonsoespinozacorrea/Desktop/F1 SIM"
+cd "/Users/alonsoespinozacorrea/F1-22-SIM"
 
 # Activar el entorno virtual
-source venv/bin/activate
+python3 -m venv venv
+source venv/bin/activate      # o venv\Scripts\activate en Windows
+pip install -r requirements.txt
 
 # Ejecutar el script de Python
 # python tests/previous_main.py

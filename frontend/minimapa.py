@@ -27,10 +27,10 @@ class MinimapaPanel(PanelUI):
 
     def intentar_descargar_mapa(self):
         """Revisa si el backend ya sabe en qué pista estamos para iniciar FastF1."""
-        track_name = getattr(self.backend, 'track_name', "Esperando...")
         track_id = getattr(self.backend, 'track_id', -1)
 
-        if not self.fastf1_ready and not self.thread_started and track_name != "Esperando..." and track_id != -1:
+        if not self.fastf1_ready and not self.thread_started and track_id != -1:
+            track_name = self.FASTF1_TRACK_DICT.get(track_id, getattr(self.backend, 'track_name', "Desconocido"))
             self.thread_started = True
             self.downloading_data = True
             thread = threading.Thread(target=self.download_fastf1_background, args=(track_id, track_name))
