@@ -19,6 +19,7 @@ class Driver:
         self.freno = 0.0
         self.marcha = 0
         self.posicion = 0
+        self.result_status = 0  # 0=inválido 1=inactivo 2=activo 3=terminó 4=DNF 5=descalificado 6=no clasificado 7=retirado
 
         # --- NUEVO: Variables de Cronometraje ---
         self.vuelta_actual = 1
@@ -88,7 +89,14 @@ class Driver:
             # --- POSICIÓN Y DISTANCIA (esenciales para leaderboard, gaps y minimapa) ---
             self.posicion = struct.unpack("<B", car_data[24:25])[0]
             self.distancia = struct.unpack("<f", car_data[12:16])[0]
-            
+
+            # --- RESULT STATUS: 0=inválido 1=inactivo 2=activo 3=terminó 4=DNF 5=descalificado
+            # 6=no clasificado 7=retirado. A diferencia de Final Classification (que el juego
+            # manda UNA sola vez), esto viene en CADA paquete de Lap Data — mucho más difícil
+            # de perder por red, y es lo que usamos como respaldo para detectar el fin de carrera.
+            if len(car_data) >= 37:
+                self.result_status = struct.unpack("<B", car_data[36:37])[0]
+
             # --- LA SOLUCIÓN AL SECTOR 3 ---
             # Guardamos el último registro válido de S1 y S2 antes de que el juego los ponga en 0 al cruzar la meta
             if not hasattr(self, 'ultimo_s1_ms'): self.ultimo_s1_ms = 0

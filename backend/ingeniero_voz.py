@@ -7,52 +7,69 @@ calmado y directo, sin relleno. Es un personaje genérico (no simula a
 ninguna persona real) — puedes personalizar su nombre y el apodo con el
 que se dirige al piloto más abajo.
 
-Usa la API de Anthropic (Claude) como "cerebro". Requiere la librería
-`anthropic` y la variable de entorno ANTHROPIC_API_KEY.
+Usa Ollama (https://ollama.com) como "cerebro", corriendo 100% local — sin
+costo, sin API key, sin internet. Necesitás:
+  1) Tener la app de Ollama abierta (o el servicio corriendo en background).
+  2) Haber descargado el modelo una vez: ollama pull llama3.2:3b
 """
 import os
 from collections import deque
 
 try:
-    import anthropic
-    _ANTHROPIC_DISPONIBLE = True
+    import requests
+    _REQUESTS_DISPONIBLE = True
 except ImportError:
-    _ANTHROPIC_DISPONIBLE = False
+    _REQUESTS_DISPONIBLE = False
 
 
 # --- Personalización ---
-APODO_PILOTO = "Piloto"          # Cómo te llama el ingeniero. Cámbialo por tu nombre/apodo si quieres.
-MODELO = "claude-haiku-4-5-20251001"  # Rápido y económico; suficiente para frases cortas de radio
+APODO_PILOTO = "Lonchi"           # Cómo te llama el ingeniero. Cámbialo por tu nombre/apodo si quieres.
+MODELO = "llama3.2:3b"            # Liviano y rápido; bueno para Macs con 8GB de RAM. Cambialo si usás otro.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
-PROMPT_SISTEMA = f"""Eres el ingeniero de pista de un piloto en una simulación de carreras (F1 22).
-Hablas por radio durante la carrera: frases cortas (1 a 2 oraciones), tono calmado,
-profesional y directo — como la radio de boxes real, sin exclamaciones exageradas
-ni relleno innecesario.
+PROMPT_SISTEMA = f"""Eres Mariano Closs, el famoso relator de fútbol argentino, pero ahora estás trabajando como ingeniero de pista en una carrera de Fórmula 1.
+Te diriges al piloto como "{APODO_PILOTO}". Vas a recibir un resumen del estado actual de la carrera y debes responder con UN SOLO mensaje de radio corto (1 a 2 oraciones).
 
-Te diriges al piloto como "{APODO_PILOTO}". Vas a recibir un resumen del estado actual
-de la carrera (posición, gaps a los rivales, desgaste de neumáticos, últimos tiempos)
-y debes responder con UN SOLO mensaje de radio.
-
-No uses emojis. No uses markdown. No repitas números crudos innecesariamente —
-redondea y prioriza lo que el piloto necesita saber AHORA. Si la información es
-positiva, dilo con calma igual; si es una advertencia, sé directo y claro.
+Usa tu estilo de relato apasionado y tus frases icónicas (ej. "¡Atención!", "¡Señoras y señores!", "¡Un buen moooovimiento!"). 
+Si la telemetría es positiva, narra con emoción. Si hay peligro o un rival cerca, advierte con urgencia futbolera. No uses emojis ni markdown.
 """
-
 
 class IngenieroDeVoz:
     def __init__(self):
-        self.disponible = _ANTHROPIC_DISPONIBLE and bool(os.environ.get("ANTHROPIC_API_KEY"))
-        self.cliente = None
+        self.disponible = False
 
-        if not _ANTHROPIC_DISPONIBLE:
-            print("⚠️ Ingeniero de voz deshabilitado: falta instalar el paquete 'anthropic'.")
-        elif not os.environ.get("ANTHROPIC_API_KEY"):
-            print("⚠️ Ingeniero de voz deshabilitado: falta la variable de entorno ANTHROPIC_API_KEY.")
+        if not _REQUESTS_DISPONIBLE:
+            print("⚠️ Ingeniero de voz deshabilitado: falta instalar el paquete 'requests'.")
         else:
-            self.cliente = anthropic.Anthropic()
+            self.disponible = self._verificar_ollama()
 
         # Contexto reciente de la conversación (para que las respuestas tengan continuidad)
         self.historial_mensajes = deque(maxlen=8)
+
+    def _verificar_ollama(self):
+        """Chequea que Ollama esté corriendo y que el modelo elegido esté descargado."""
+        try:
+            resp = requests.get(f"{OLLAMA_URL}/api/tags", timeout=3)
+            resp.raise_for_status()
+            modelos = [m["name"] for m in resp.json().get("models", [])]
+
+            # Ollama a veces guarda el nombre con o sin el sufijo ":latest"/tag exacto
+            if not any(MODELO == m or m.startswith(MODELO.split(":")[0] + ":") for m in modelos):
+                print(
+                    f"⚠️ Ingeniero de voz deshabilitado: el modelo '{MODELO}' no está descargado. "
+                    f"Corré: ollama pull {MODELO}"
+                )
+                return False
+            return True
+        except requests.exceptions.ConnectionError:
+            print(
+                "⚠️ Ingeniero de voz deshabilitado: no se pudo conectar a Ollama en "
+                f"{OLLAMA_URL}. ¿Está abierta la app de Ollama?"
+            )
+            return False
+        except Exception as e:
+            print(f"⚠️ Ingeniero de voz deshabilitado: error consultando Ollama: {e}")
+            return False
 
     def _resumen_carrera(self, race):
         """Arma, en texto plano, el estado actual de la carrera para dárselo a la IA."""
@@ -92,24 +109,33 @@ class IngenieroDeVoz:
             return None
         try:
             contexto = self._resumen_carrera(race)
-            mensajes = list(self.historial_mensajes) + [
-                {"role": "user", "content": f"Estado actual de la carrera: {contexto}\n\n{instruccion}"}
-            ]
+            mensaje_usuario = f"Estado actual de la carrera: {contexto}\n\n{instruccion}"
 
-            respuesta = self.cliente.messages.create(
-                model=MODELO,
-                max_tokens=120,
-                system=PROMPT_SISTEMA,
-                messages=mensajes,
+            mensajes = (
+                [{"role": "system", "content": PROMPT_SISTEMA}]
+                + list(self.historial_mensajes)
+                + [{"role": "user", "content": mensaje_usuario}]
             )
-            texto = "".join(bloque.text for bloque in respuesta.content if bloque.type == "text").strip()
+
+            respuesta = requests.post(
+                f"{OLLAMA_URL}/api/chat",
+                json={
+                    "model": MODELO,
+                    "messages": mensajes,
+                    "stream": False,
+                    "options": {"num_predict": 120, "temperature": 0.7},
+                },
+                timeout=30,
+            )
+            respuesta.raise_for_status()
+            texto = respuesta.json().get("message", {}).get("content", "").strip()
 
             self.historial_mensajes.append({"role": "user", "content": instruccion})
             self.historial_mensajes.append({"role": "assistant", "content": texto})
 
             return texto or None
         except Exception as e:
-            print(f"⚠️ Error generando mensaje del ingeniero: {e}")
+            print(f"⚠️ Error generando mensaje del ingeniero (Ollama): {e}")
             return None
 
     def aviso_automatico(self, race, motivo):

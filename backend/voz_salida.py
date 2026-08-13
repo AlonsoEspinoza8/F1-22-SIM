@@ -32,18 +32,18 @@ class SalidaDeVoz:
         self._cola.put(texto)
 
     def _worker(self):
-        try:
-            motor = pyttsx3.init()
-            motor.setProperty('rate', self._velocidad)
-        except Exception as e:
-            print(f"⚠️ No se pudo inicializar el motor de voz (pyttsx3): {e}")
-            self.disponible = False
-            return
-
+        # OJO: en macOS (driver 'nsss' de pyttsx3), reusar la MISMA instancia del
+        # motor entre varios mensajes se cuelga después del primer runAndWait() —
+        # es un bug conocido de pyttsx3. La solución es crear una instancia NUEVA
+        # del motor para cada mensaje en vez de reutilizar una persistente.
         while True:
             texto = self._cola.get()
             try:
+                motor = pyttsx3.init()
+                motor.setProperty('rate', self._velocidad)
                 motor.say(texto)
                 motor.runAndWait()
+                motor.stop()
+                del motor
             except Exception as e:
                 print(f"⚠️ Error en texto a voz: {e}")

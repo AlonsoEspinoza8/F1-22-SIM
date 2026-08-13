@@ -25,7 +25,11 @@ class Race:
         self.session_uid = None
         self.carrera_terminada = False
         self.momento_fin_carrera = None
-        self.GRACIA_MENSAJE_FIN_S = 5  # segundos mínimos que el aviso se mantiene visible
+
+        # Último gap válido conocido (para no mostrar un número disparatado ante un
+        # glitch transitorio de un frame, típicamente justo al cruzar la meta)
+        self._ultimo_gap_adelante_valido = None
+        self._ultimo_gap_atras_valido = None
 
         # Mapeo de trackId (paquete de sesión) a nombre de circuito
         self.FASTF1_TRACK_DICT = {
@@ -38,7 +42,6 @@ class Race:
         }
 
     def actualizar_telemetria(self):
-        terminada_en_este_ciclo = False
         try:
             while True:
                 packet_data, addr = self.sock.recvfrom(2048)
@@ -49,23 +52,13 @@ class Race:
                 self.player_car_index = unpacked_header[8]
 
                 # --- DETECCIÓN DE SESIÓN NUEVA (sessionUID cambia entre practica/quali/carrera) ---
-                # No reseteamos el aviso de fin de carrera si: (a) se acaba de activar en ESTE
-                # mismo ciclo de lectura (el juego puede mandar paquetes de la sesión siguiente
-                # mezclados con el de Final Classification), o (b) todavía no pasó el tiempo
-                # mínimo de gracia — así el mensaje siempre alcanza a mostrarse en pantalla.
+                # OJO: ya NO reseteamos acá el aviso de fin de carrera por un simple cambio de
+                # session_uid — eso pasa apenas volvés al garage/menú (aunque no hayas arrancado
+                # a manejar de nuevo), y con un tiempo de gracia corto el aviso podía apagarse
+                # antes de que llegaras a mirar la pantalla (por ejemplo, si jugás en la PS5/TV y
+                # recién después mirás el Mac). El reseteo real ahora pasa en
+                # _verificar_fin_de_carrera_por_resultado(), cuando volvés a estar ACTIVO en pista.
                 nuevo_session_uid = unpacked_header[5]
-                if self.session_uid is not None and nuevo_session_uid != self.session_uid:
-                    tiempo_desde_fin = (
-                        time.time() - self.momento_fin_carrera
-                        if self.momento_fin_carrera is not None else None
-                    )
-                    puede_resetear = (
-                        not terminada_en_este_ciclo
-                        and (tiempo_desde_fin is None or tiempo_desde_fin > self.GRACIA_MENSAJE_FIN_S)
-                    )
-                    if puede_resetear:
-                        self.carrera_terminada = False
-                        self.momento_fin_carrera = None
                 self.session_uid = nuevo_session_uid
 
                 # # --- NUEVO RADAR ---
@@ -94,7 +87,6 @@ class Race:
                     if not self.carrera_terminada:
                         self.carrera_terminada = True
                         self.momento_fin_carrera = time.time()
-                        terminada_en_este_ciclo = True
                         self._lanzar_analisis_curvas()
 
                 elif packet_id in [0, 2, 6, 10] and self.drivers:
@@ -113,6 +105,9 @@ class Race:
                                     self.drivers[i].get_driver_car_telemetry(car_block, self.player_car_index)
                                 elif packet_id == 10:
                                     self.drivers[i].get_driver_car_damage(car_block)
+
+                    if packet_id == 2:
+                        self._verificar_fin_de_carrera_por_resultado()
                 
 
         except BlockingIOError:
@@ -165,6 +160,39 @@ class Race:
         except Exception as e:
             print(f"⚠️ No se pudo iniciar el análisis de curvas: {e}")
 
+    def _verificar_fin_de_carrera_por_resultado(self):
+        """
+        Detecta el fin de carrera vía m_resultStatus del propio piloto (respaldo a
+        Final Classification, packet_id 8, que el juego manda UNA sola vez y por lo
+        tanto puede perderse por red). m_resultStatus viene en CADA paquete de Lap
+        Data, así que es mucho más difícil que se pierda.
+
+        También es la responsable de APAGAR el aviso: no lo hacemos por un simple
+        cambio de session_uid ni por un timer corto, porque si jugás mirando otra
+        pantalla (p. ej. la PS5/TV) y recién después mirás este dashboard, un aviso
+        que se auto-oculta a los pocos segundos puede desaparecer antes de que
+        llegues a verlo. En cambio, se apaga recién cuando volvés a estar
+        ACTIVO en pista (result_status == 2) de verdad.
+        """
+        yo = self.drivers.get(self.player_car_index)
+        if not yo:
+            return
+
+        status = getattr(yo, 'result_status', 0)
+
+        if not self.carrera_terminada:
+            # 3=terminó 4=DNF 5=descalificado 6=no clasificado 7=retirado -> tu carrera ya acabó
+            if status >= 3:
+                print("🏁 Fin de carrera detectado por resultado del piloto (respaldo a Final Classification).")
+                self.carrera_terminada = True
+                self.momento_fin_carrera = time.time()
+                self._lanzar_analisis_curvas()
+        else:
+            # Volviste a estar activo en pista de verdad -> recién ahí apagamos el aviso
+            if status == 2:
+                self.carrera_terminada = False
+                self.momento_fin_carrera = None
+
     def get_race_best_sectors(self):
         """
         Recorre el historial de vueltas de TODOS los pilotos (no solo el jugador)
@@ -207,14 +235,44 @@ class Race:
             "piloto_atras": "-", "gap_atras_m": 0.0
         }
 
+        # Distancia ACUMULADA en toda la carrera (no solo dentro de la vuelta actual):
+        # la distancia de vuelta ('distancia') se reinicia a ~0 cada vez que cruzás la
+        # meta, así que restarla directamente entre dos autos provoca un salto brusco
+        # justo en ese instante. Sumándole las vueltas ya completadas se vuelve
+        # monótona a lo largo de toda la carrera y el gap queda estable.
+        def distancia_acumulada(piloto):
+            vuelta = max(getattr(piloto, 'vuelta_actual', 1), 1)
+            return (vuelta - 1) * self.longitud_pista + getattr(piloto, 'distancia', 0.0)
+
+        # Salvaguarda extra: por más que la fórmula de arriba sea correcta, un paquete
+        # UDP perdido justo en el instante del cruce puede dejar a un auto "atrasado"
+        # un frame (su vuelta_actual todavía no incrementó). Un gap real entre autos
+        # consecutivos en la clasificación nunca debería superar ~medio circuito; si
+        # da eso, es ese glitch transitorio, no un gap real: lo ignoramos ese frame y
+        # mantenemos el último valor válido en vez de mostrar un número disparatado.
+        limite_gap_valido_m = self.longitud_pista * 0.5
+
+        mi_distancia = distancia_acumulada(yo)
+
         if yo.posicion > 1 and (yo.posicion - 2) < len(pilotos):
             p_adelante = pilotos[yo.posicion - 2]
-            gaps["piloto_adelante"] = p_adelante.nombre
-            gaps["gap_adelante_m"] = abs(p_adelante.distancia - yo.distancia)
+            gap = abs(distancia_acumulada(p_adelante) - mi_distancia)
+            if gap <= limite_gap_valido_m:
+                gaps["piloto_adelante"] = p_adelante.nombre
+                gaps["gap_adelante_m"] = gap
+            elif self._ultimo_gap_adelante_valido is not None:
+                gaps["piloto_adelante"], gaps["gap_adelante_m"] = self._ultimo_gap_adelante_valido
+            if gap <= limite_gap_valido_m:
+                self._ultimo_gap_adelante_valido = (p_adelante.nombre, gap)
 
         if yo.posicion < len(pilotos):
             p_atras = pilotos[yo.posicion]
-            gaps["piloto_atras"] = p_atras.nombre
-            gaps["gap_atras_m"] = abs(yo.distancia - p_atras.distancia)
+            gap = abs(mi_distancia - distancia_acumulada(p_atras))
+            if gap <= limite_gap_valido_m:
+                gaps["piloto_atras"] = p_atras.nombre
+                gaps["gap_atras_m"] = gap
+                self._ultimo_gap_atras_valido = (p_atras.nombre, gap)
+            elif self._ultimo_gap_atras_valido is not None:
+                gaps["piloto_atras"], gaps["gap_atras_m"] = self._ultimo_gap_atras_valido
 
         return gaps
