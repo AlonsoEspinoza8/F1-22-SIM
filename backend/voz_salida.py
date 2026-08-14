@@ -21,7 +21,7 @@ except ImportError as e:
     _TTS_DISPONIBLE = False
 
 class SalidaDeVoz:
-    def __init__(self, archivo_muestra="closs_sample.wav"):
+    def __init__(self, archivo_muestra="cobrix_sample.wav"):
         self.disponible = _TTS_DISPONIBLE
         self._cola = queue.Queue()
         self.archivo_muestra = archivo_muestra
