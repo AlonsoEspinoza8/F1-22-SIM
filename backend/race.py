@@ -31,6 +31,9 @@ class Race:
         self._ultimo_gap_adelante_valido = None
         self._ultimo_gap_atras_valido = None
 
+        # Para el log de diagnóstico de _verificar_fin_de_carrera_por_resultado
+        self._ultimo_result_status_visto = None
+
         # Mapeo de trackId (paquete de sesión) a nombre de circuito
         self.FASTF1_TRACK_DICT = {
             0: "Australia", 1: "France", 2: "China", 3: "Bahrain",
@@ -84,6 +87,7 @@ class Race:
 
                 elif packet_id == 8:
                     # Final Classification: el juego lo envía una sola vez, justo al terminar la carrera.
+                    print("ℹ️ [diagnóstico] Llegó paquete Final Classification (packet_id 8).")
                     if not self.carrera_terminada:
                         self.carrera_terminada = True
                         self.momento_fin_carrera = time.time()
@@ -176,9 +180,17 @@ class Race:
         """
         yo = self.drivers.get(self.player_car_index)
         if not yo:
+            if self._ultimo_result_status_visto != "sin_auto":
+                print(f"ℹ️ [diagnóstico] player_car_index={self.player_car_index} no está (todavía) en self.drivers.")
+                self._ultimo_result_status_visto = "sin_auto"
             return
 
         status = getattr(yo, 'result_status', 0)
+
+        # Log de diagnóstico: solo cuando CAMBIA, para ver la secuencia real sin saturar la consola
+        if status != self._ultimo_result_status_visto:
+            print(f"ℹ️ [diagnóstico] result_status del piloto cambió: {self._ultimo_result_status_visto} -> {status}")
+            self._ultimo_result_status_visto = status
 
         if not self.carrera_terminada:
             # 3=terminó 4=DNF 5=descalificado 6=no clasificado 7=retirado -> tu carrera ya acabó

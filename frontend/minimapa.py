@@ -1,8 +1,8 @@
 import arcade
-import fastf1
 import threading
 import os
 from frontend.base import PanelUI
+from backend.circuito_cache import obtener_datos_circuito
 
 class MinimapaPanel(PanelUI):
     def __init__(self, backend):
@@ -37,25 +37,24 @@ class MinimapaPanel(PanelUI):
             thread.start()
 
     def download_fastf1_background(self, track_id, track_name):
-        """Descarga la telemetría en segundo plano sin congelar la ventana de Arcade."""
+        """
+        Trae el trazado del circuito en un hilo aparte (sin congelar la ventana).
+        Usa el caché local si ya existe (rápido, sin fastf1/pandas en memoria);
+        si no, cae a descargarlo de FastF1.
+        """
         try:
-            os.makedirs('cache_dir', exist_ok=True)
-            fastf1.Cache.enable_cache('cache_dir') 
-            
-            fastf1_location = self.FASTF1_TRACK_DICT.get(track_id, track_name)
-            
-            session = fastf1.get_session(2022, fastf1_location, 'Q')
-            session.load(telemetry=True, weather=False, messages=False)
-            
-            fastest_lap = session.laps.pick_fastest()
-            telemetry = fastest_lap.get_telemetry()
-            
-            x = telemetry['X'].values
-            y = telemetry['Y'].values
-            dist = telemetry['Distance'].values
-            
-            self.max_fastf1_dist = dist[-1] 
-            
+            datos = obtener_datos_circuito(track_id, self.FASTF1_TRACK_DICT)
+            if not datos:
+                self.fastf1_error = "No se pudo obtener el circuito (ni caché ni FastF1)"
+                self.downloading_data = False
+                return
+
+            x = [p["x"] for p in datos["telemetria"]]
+            y = [p["y"] for p in datos["telemetria"]]
+            dist = [p["distancia"] for p in datos["telemetria"]]
+
+            self.max_fastf1_dist = dist[-1]
+
             min_x, max_x = min(x), max(x)
             min_y, max_y = min(y), max(y)
             max_range = max(max_x - min_x, max_y - min_y)
@@ -80,7 +79,7 @@ class MinimapaPanel(PanelUI):
             self.downloading_data = False
             
         except Exception as e:
-            self.fastf1_error = f"Error de FastF1: {str(e)}"
+            self.fastf1_error = f"Error obteniendo el circuito: {str(e)}"
             self.downloading_data = False 
 
     def get_coordenadas_mapa(self, distancia_piloto):

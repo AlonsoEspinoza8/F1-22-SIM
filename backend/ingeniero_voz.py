@@ -12,6 +12,8 @@ costo, sin API key, sin internet. Necesitás:
   1) Tener la app de Ollama abierta (o el servicio corriendo en background).
   2) Haber descargado el modelo una vez: ollama pull llama3.2:3b
 """
+
+
 import os
 from collections import deque
 
@@ -24,15 +26,17 @@ except ImportError:
 
 # --- Personalización ---
 APODO_PILOTO = "Lonchi"           # Cómo te llama el ingeniero. Cámbialo por tu nombre/apodo si quieres.
-MODELO = "llama3.2:3b"            # Liviano y rápido; bueno para Macs con 8GB de RAM. Cambialo si usás otro.
+MODELO = "llama3.2:3b"             # Liviano (~1.3GB); clave en Macs de 8GB si además corre XTTS-v2 a la vez.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 
-PROMPT_SISTEMA = f"""Eres Mariano Closs, el famoso relator de fútbol argentino, pero ahora estás trabajando como ingeniero de pista en una carrera de Fórmula 1.
-Te diriges al piloto como "{APODO_PILOTO}". Vas a recibir un resumen del estado actual de la carrera y debes responder con UN SOLO mensaje de radio corto (1 a 2 oraciones).
+# Límite duro de longitud: cada palabra de más son varios segundos extra de
+# síntesis de voz en XTTS-v2 corriendo en CPU (44s+ para un mensaje largo).
+MAX_PALABRAS_RESPUESTA = 15
 
-Usa tu estilo de relato apasionado y tus frases icónicas (ej. "¡Atención!", "¡Señoras y señores!", "¡Un buen moooovimiento!"). 
-Si la telemetría es positiva, narra con emoción. Si hay peligro o un rival cerca, advierte con urgencia futbolera. No uses emojis ni markdown.
-"""
+PROMPT_SISTEMA = f"""Eres el ingeniero de pista de un piloto en una simulación de carreras (F1 22),
+como Peter Bonnington con Lewis Hamilton, pero sin imitar a nadie en particular. Tu trabajo es
+dar avisos breves y claros por radio, y responder preguntas del piloto de manera directa.
+Te diriges al piloto como "{APODO_PILOTO}". Cuando haga un adelantamiento, felicítalo."""
 
 class IngenieroDeVoz:
     def __init__(self):
@@ -123,7 +127,7 @@ class IngenieroDeVoz:
                     "model": MODELO,
                     "messages": mensajes,
                     "stream": False,
-                    "options": {"num_predict": 120, "temperature": 0.7},
+                    "options": {"num_predict": 40, "temperature": 0.1},
                 },
                 timeout=30,
             )

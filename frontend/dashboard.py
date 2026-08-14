@@ -13,7 +13,6 @@ from frontend.gaps import GapsPosicionPanel
 from frontend.leaderboard import LeaderboardPanel
 from frontend.minimapa import MinimapaPanel
 from frontend.radio import RadioPanel
-from backend.voz_salida import SalidaDeVoz  # Importamos tu módulo de voz nativo
 
 SCREEN_WIDTH = 1250
 SCREEN_HEIGHT = 800
@@ -36,16 +35,6 @@ class FrontEnd(arcade.Window):
         arcade.set_background_color(arcade.color.EERIE_BLACK)
         self.backend = backend_race
 
-        # -------- Cargamos un mensaje inicial del asistente de voz -------
-
-        # self.ingeniero_voz = SalidaDeVoz()
-        
-        # # 2. Mensaje de chequeo de radio en la inicialización
-        # mensaje_inicio = (
-        #     "Señoras y señores, bienvenidos a una nueva carrera de Fórmula 1."
-        # )
-        # self.ingeniero_voz.decir(mensaje_inicio)
-        
         # Instanciar los paneles importados
         self.panel_sectores = TiemposSectoresPanel(self.backend)
         self.panel_telemetria = TelemetriaPedalesPanel(self.backend)
@@ -185,7 +174,7 @@ class FrontEnd(arcade.Window):
             self.panel_radio.draw,
             self.mensajes_radio,
             self.entrada_voz.grabando,                                  # push-to-talk manual activo
-            self.procesando_pregunta or self.entrada_voz.procesando_frase,
+            self.procesando_pregunta or self.entrada_voz.procesando_frase or self.salida_voz.generando_audio,
             self.entrada_voz.escuchando,
             self.entrada_voz.palabra_activacion,
         )

@@ -21,7 +21,7 @@ import matplotlib
 matplotlib.use("Agg")  # Backend sin ventana: solo genera archivos PNG, no compite con la ventana de arcade
 import matplotlib.pyplot as plt
 
-import fastf1
+from backend.circuito_cache import obtener_datos_circuito as _obtener_datos_circuito_cache
 
 
 UMBRAL_AGRUPACION_M = 200   # Si dos curvas quedan a menos de esto, se grafican juntas
@@ -32,7 +32,6 @@ MARGEN_ZONA_M = 60          # Contexto extra antes/después de la(s) curva(s): f
 # sin importar cómo se haya lanzado el juego/script.
 _DIR_BACKEND = os.path.dirname(os.path.abspath(__file__))
 _DIR_PROYECTO = os.path.dirname(_DIR_BACKEND)
-_DIR_CACHE_FASTF1 = os.path.join(_DIR_PROYECTO, "cache_dir")
 _DIR_GRAFICOS_BASE = os.path.join(_DIR_PROYECTO, "graficos_curvas")
 _ARCHIVO_LOG_ERRORES = os.path.join(_DIR_PROYECTO, "graficos_curvas", "errores.log")
 
@@ -59,48 +58,25 @@ def _rotar(xy, angulo):
 
 def obtener_datos_circuito(track_id, track_dict):
     """
-    Descarga (vía FastF1) todo lo necesario para dibujar el trazado del circuito:
-    - la telemetría (X, Y, Distance) de la vuelta más rápida de clasificación 2022
-    - la lista de curvas (número, distancia, posición, ángulo) y la rotación del circuito
+    Trae los datos del circuito (telemetría X/Y/distancia + curvas + rotación).
+    Usa el caché local (backend/circuito_cache.py) si ya existe — así ni fastf1
+    ni pandas se cargan en memoria — y si no, cae a descargarlo de FastF1.
     """
-    try:
-        os.makedirs(_DIR_CACHE_FASTF1, exist_ok=True)
-        fastf1.Cache.enable_cache(_DIR_CACHE_FASTF1)
-
-        ubicacion = track_dict.get(track_id)
-        if not ubicacion:
-            _registrar_error(f"⚠️ Circuito con track_id={track_id} no está en el diccionario de FastF1.")
-            return None
-
-        session = fastf1.get_session(2022, ubicacion, 'Q')
-        session.load(telemetry=True, weather=False, messages=False)
-
-        vuelta = session.laps.pick_fastest()
-        telemetria = vuelta.get_telemetry()
-        if 'Distance' not in telemetria.columns:
-            telemetria = telemetria.add_distance()
-
-        circuit_info = session.get_circuit_info()
-
-        curvas = sorted(
-            [{
-                "numero": int(fila.Number),
-                "distancia": float(fila.Distance),
-                "x": float(fila.X),
-                "y": float(fila.Y),
-                "angulo": float(fila.Angle),
-            } for _, fila in circuit_info.corners.iterrows()],
-            key=lambda c: c["distancia"]
-        )
-
-        return {
-            "telemetria": telemetria,
-            "curvas": curvas,
-            "angulo_rotacion": circuit_info.rotation / 180 * np.pi,
-        }
-    except Exception:
-        _registrar_error(f"⚠️ No se pudieron obtener los datos del circuito:\n{traceback.format_exc()}")
+    datos = _obtener_datos_circuito_cache(track_id, track_dict)
+    if not datos:
         return None
+
+    # El caché guarda listas planas (JSON-friendly) y el ángulo en grados;
+    # acá los convertimos a lo que ya usa el resto de este archivo: arrays de
+    # NumPy y el ángulo en radianes.
+    telemetria = datos["telemetria"]
+    return {
+        "curvas": datos["curvas"],
+        "angulo_rotacion": datos["angulo_rotacion_grados"] / 180 * np.pi,
+        "_xs": np.array([p["x"] for p in telemetria]),
+        "_ys": np.array([p["y"] for p in telemetria]),
+        "_dists": np.array([p["distancia"] for p in telemetria]),
+    }
 
 
 def agrupar_curvas(curvas, longitud_pista, umbral=UMBRAL_AGRUPACION_M, margen=MARGEN_ZONA_M):
@@ -150,19 +126,19 @@ def _dibujar_mapa_circuito(ax, datos_circuito, zona):
     Dibuja el trazado completo del circuito con todas las curvas numeradas,
     resaltando en rojo el tramo y las curvas correspondientes a 'zona'.
     """
-    telemetria = datos_circuito["telemetria"]
+    xs, ys, dists = datos_circuito["_xs"], datos_circuito["_ys"], datos_circuito["_dists"]
     angulo = datos_circuito["angulo_rotacion"]
     numeros_zona = {c["numero"] for c in zona["curvas"]}
 
     # Trazado completo, en gris
-    pista = telemetria[["X", "Y"]].to_numpy()
+    pista = np.column_stack([xs, ys])
     pista_rotada = _rotar(pista, angulo)
     ax.plot(pista_rotada[:, 0], pista_rotada[:, 1], color="dimgray", linewidth=1.5, zorder=1)
 
     # Tramo de pista de la zona analizada, resaltado
-    segmento = telemetria[(telemetria["Distance"] >= zona["inicio"]) & (telemetria["Distance"] <= zona["fin"])]
-    if not segmento.empty:
-        segmento_xy = _rotar(segmento[["X", "Y"]].to_numpy(), angulo)
+    mascara = (dists >= zona["inicio"]) & (dists <= zona["fin"])
+    if mascara.any():
+        segmento_xy = _rotar(np.column_stack([xs[mascara], ys[mascara]]), angulo)
         ax.plot(segmento_xy[:, 0], segmento_xy[:, 1], color="red", linewidth=4,
                 solid_capstyle="round", zorder=2)
 
