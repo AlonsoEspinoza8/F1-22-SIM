@@ -7,12 +7,12 @@ class TelemetriaPedalesPanel(PanelUI):
 
     def draw(self, mi_auto):
         # 1. Dibujamos el contenedor base
-        self.dibujar_recuadro_universal(250, 250, 400, 200, arcade.color.GRAY)
-        arcade.draw_text("Live Telemetry & Engine", 60, 330, arcade.color.WHITE, 12, bold=True)
+        self.dibujar_recuadro_universal(200, 425, 350, 190, arcade.color.GRAY)
+        arcade.draw_text("Live Telemetry & Engine", 10, 505, arcade.color.WHITE, 12, bold=True)
         
         # Validamos que tengamos datos
         if not mi_auto:
-            arcade.draw_text("Esperando telemetría del auto...", 130, 240, arcade.color.ORANGE, 12)
+            arcade.draw_text("Esperando telemetría del auto...", 80, 415, arcade.color.ORANGE, 12)
             return
 
         # 2. Extraemos los datos de manera segura 
@@ -24,16 +24,16 @@ class TelemetriaPedalesPanel(PanelUI):
 
         # 3. Dibujar Textos (Lado Izquierdo del recuadro)
         marcha_str = "R" if gear == -1 else ("N" if gear == 0 else str(gear))
-        arcade.draw_text(f"Velocidad: {speed} km/h", 70, 280, arcade.color.WHITE, 14, bold=True)
-        arcade.draw_text(f"Marcha: {marcha_str}", 70, 250, arcade.color.WHITE, 14)
+        arcade.draw_text(f"Velocidad: {speed} km/h", 20, 455, arcade.color.WHITE, 14, bold=True)
+        arcade.draw_text(f"Marcha: {marcha_str}", 20, 425, arcade.color.WHITE, 14)
 
         # 4. Dibujar Barras de Pedales (Lado Derecho del recuadro)
         max_height = 120
         bar_width = 40
-        bottom_y = 175
+        bottom_y = 355
         
         # --- Barra del Acelerador ---
-        cx_accel = 280
+        cx_accel = 230
         arcade.draw_polygon_outline((
             (cx_accel - bar_width/2, bottom_y), 
             (cx_accel + bar_width/2, bottom_y), 
@@ -52,7 +52,7 @@ class TelemetriaPedalesPanel(PanelUI):
         arcade.draw_text("ACEL", cx_accel - 18, bottom_y - 20, arcade.color.WHITE, 10, bold=True)
 
         # --- Barra del Freno ---
-        cx_brake = 360
+        cx_brake = 310
         arcade.draw_polygon_outline((
             (cx_brake - bar_width/2, bottom_y), 
             (cx_brake + bar_width/2, bottom_y), 

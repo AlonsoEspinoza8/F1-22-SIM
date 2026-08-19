@@ -18,12 +18,12 @@ def color_por_desgaste(pct):
 
 class DesgasteNeumaticosPanel(PanelUI):
     def draw(self, mi_auto):
-        cx, cy = 700, 250
-        self.dibujar_recuadro_universal(cx, cy, 300, 200, arcade.color.GRAY)
-        arcade.draw_text("Tyre Degradation", 560, 335, arcade.color.WHITE, 12, bold=True)
+        cx, cy = 195, 190
+        self.dibujar_recuadro_universal(cx, cy, 270, 190, arcade.color.GRAY)
+        arcade.draw_text("Tyre Degradation", 55, 275, arcade.color.WHITE, 12, bold=True)
 
         if not mi_auto:
-            arcade.draw_text("Esperando telemetría...", 610, 245, arcade.color.ORANGE, 11)
+            arcade.draw_text("Esperando telemetría...", 105, 185, arcade.color.ORANGE, 11)
             return
 
         desgaste = getattr(mi_auto, 'desgaste_neumaticos', {"FL": 0.0, "FR": 0.0, "RL": 0.0, "RR": 0.0})
@@ -32,10 +32,10 @@ class DesgasteNeumaticosPanel(PanelUI):
         # Posiciones relativas al centro del panel, en vista superior del auto:
         # delanteras arriba, traseras abajo
         posiciones = {
-            "FL": (cx - 60, cy + 45),
-            "FR": (cx + 60, cy + 45),
-            "RL": (cx - 60, cy - 55),
-            "RR": (cx + 60, cy - 55),
+            "FL": (cx - 60, cy + 38),
+            "FR": (cx + 60, cy + 38),
+            "RL": (cx - 60, cy - 46),
+            "RR": (cx + 60, cy - 46),
         }
 
         for etiqueta, (px, py) in posiciones.items():
@@ -54,5 +54,5 @@ class DesgasteNeumaticosPanel(PanelUI):
             arcade.draw_text(f"{pct:.0f}%", px, py - 12, arcade.color.BLACK, 11, bold=True, anchor_x="center")
 
         # Silueta simple del chasis conectando las 4 ruedas, para ubicar visualmente el auto
-        arcade.draw_line(cx - 30, cy + 45, cx - 30, cy - 55, arcade.color.LIGHT_GRAY, 2)
-        arcade.draw_line(cx + 30, cy + 45, cx + 30, cy - 55, arcade.color.LIGHT_GRAY, 2)
+        arcade.draw_line(cx - 30, cy + 38, cx - 30, cy - 46, arcade.color.LIGHT_GRAY, 2)
+        arcade.draw_line(cx + 30, cy + 38, cx + 30, cy - 46, arcade.color.LIGHT_GRAY, 2)

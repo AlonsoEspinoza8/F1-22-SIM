@@ -20,6 +20,7 @@ class Driver:
         self.marcha = 0
         self.posicion = 0
         self.result_status = 0  # 0=inválido 1=inactivo 2=activo 3=terminó 4=DNF 5=descalificado 6=no clasificado 7=retirado
+        self.compuesto_neumatico = 0  # m_visualTyreCompound: 16=blando 17=medio 18=duro 7=intermedio 8=lluvia
 
         # --- NUEVO: Variables de Cronometraje ---
         self.vuelta_actual = 1
@@ -153,3 +154,11 @@ class Driver:
             self.desgaste_neumaticos = {
                 "FL": fl, "FR": fr, "RL": rl, "RR": rr
             }
+
+    def get_driver_car_status(self, car_data):
+        """
+        Parsea el paquete Car Status (packet_id 7). m_visualTyreCompound está en
+        el offset 26 (uint8): 16=blando 17=medio 18=duro 7=intermedio 8=lluvia.
+        """
+        if len(car_data) >= 27:
+            self.compuesto_neumatico = struct.unpack("<B", car_data[26:27])[0]

@@ -40,4 +40,3 @@ fi
 
 # Ejecutar el script de Python
 python main.py
-# python main.py --sin-gui

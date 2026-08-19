@@ -3,6 +3,7 @@ import struct
 import time
 from tabulate import tabulate
 import traceback
+from backend.circuitos import FASTF1_TRACK_DICT
 
 class Race:
     def __init__(self):
@@ -20,6 +21,7 @@ class Race:
         self.track_name = "Esperando..."
         self.track_id = -1
         self.longitud_pista = 5000.0
+        self.total_vueltas = 0
 
         # --- ESTADO DE LA SESIÓN / FIN DE CARRERA ---
         self.session_uid = None
@@ -34,20 +36,20 @@ class Race:
         # Para el log de diagnóstico de _verificar_fin_de_carrera_por_resultado
         self._ultimo_result_status_visto = None
 
-        # Mapeo de trackId (paquete de sesión) a nombre de circuito
-        self.FASTF1_TRACK_DICT = {
-            0: "Australia", 1: "France", 2: "China", 3: "Bahrain",
-            4: "Spain", 5: "Monaco", 6: "Canada", 7: "Great Britain", 8: "Germany",
-            9: "Hungary", 10: "Belgium", 11: "Italy", 12: "Singapore",
-            13: "Japan", 14: "Abu Dhabi", 15: "United States", 16: "Brazil", 17: "Austria",
-            18: "Russia", 19: "Mexico", 20: "Azerbaijan", 26: "Netherlands",
-            27: "Emilia Romagna", 28: "Portugal", 29: "Saudi Arabia", 30: "Miami"
-        }
+        # --- DIAGNÓSTICO: contador de paquetes recibidos, para saber si la
+        # recepción UDP se corta justo al terminar la carrera (problema de red)
+        # o si sigue llegando normalmente (en cuyo caso el problema es otro).
+        self._contador_paquetes = 0
+        self._ultimo_reporte_paquetes = time.time()
+
+        # Mapeo de trackId (paquete de sesión) a nombre de circuito — fuente única en backend/circuitos.py
+        self.FASTF1_TRACK_DICT = FASTF1_TRACK_DICT
 
     def actualizar_telemetria(self):
         try:
             while True:
                 packet_data, addr = self.sock.recvfrom(2048)
+                self._contador_paquetes += 1
                 header_data = packet_data[0:self.header_size]
                 unpacked_header = struct.unpack(self.header_format, header_data)
                 
@@ -76,6 +78,7 @@ class Race:
                         session_data = packet_data[self.header_size : self.header_size + session_size]
                         unpacked = struct.unpack(session_format, session_data)
                         self.longitud_pista = unpacked[4]
+                        self.total_vueltas = unpacked[3]
 
                         nuevo_track_id = unpacked[6]
                         if nuevo_track_id != self.track_id:
@@ -93,8 +96,8 @@ class Race:
                         self.momento_fin_carrera = time.time()
                         self._lanzar_analisis_curvas()
 
-                elif packet_id in [0, 2, 6, 10] and self.drivers:
-                    sizes = {0: 60, 2: 43, 6: 60, 10: 42}
+                elif packet_id in [0, 2, 6, 7, 10] and self.drivers:
+                    sizes = {0: 60, 2: 43, 6: 60, 7: 47, 10: 42}
                     size_car = sizes[packet_id]
                     
                     for i in range(22):
@@ -107,6 +110,8 @@ class Race:
                                 elif packet_id == 2: self.drivers[i].get_driver_lap_data(car_block)
                                 elif packet_id == 6: 
                                     self.drivers[i].get_driver_car_telemetry(car_block, self.player_car_index)
+                                elif packet_id == 7:
+                                    self.drivers[i].get_driver_car_status(car_block)
                                 elif packet_id == 10:
                                     self.drivers[i].get_driver_car_damage(car_block)
 
@@ -120,6 +125,15 @@ class Race:
             print("\n💥 ¡CHOQUE DE DATOS EN EL MOTOR UDP!")
             import traceback
             traceback.print_exc()  # Esto revelará la línea exacta que falla
+
+        # --- DIAGNÓSTICO: reporte de paquetes/segundo cada 5s. Si esto cae a 0
+        # justo al cruzar la meta, confirma que es un corte de red (WiFi consola
+        # <-> Mac), no un problema del parseo/lógica de nuestro código.
+        ahora = time.time()
+        if ahora - self._ultimo_reporte_paquetes >= 5.0:
+            print(f"ℹ️ [diagnóstico] Paquetes UDP recibidos en los últimos 5s: {self._contador_paquetes}")
+            self._contador_paquetes = 0
+            self._ultimo_reporte_paquetes = ahora
 
     def get_race_participants(self, packet_data):
         if len(packet_data) < self.header_size + 1: return

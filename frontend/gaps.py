@@ -6,7 +6,10 @@ class GapsPosicionPanel(PanelUI):
         self.backend = backend
 
     def draw(self):
-        self.dibujar_recuadro_universal(1050, 250, 300, 200, arcade.color.GRAY)
+        cx, cy = 1080, 155
+        self.dibujar_recuadro_universal(cx, cy, 280, 125, arcade.color.GRAY)
+        arcade.draw_text("Race Info", cx - 130, cy + 45, arcade.color.WHITE, 12, bold=True)
+
         gaps = self.backend.get_player_gaps() if hasattr(self.backend, 'get_player_gaps') else None
         
         if gaps:
@@ -17,6 +20,6 @@ class GapsPosicionPanel(PanelUI):
             texto_pos = "Actual Pos: Calculando..."
             texto_adelante, texto_atras = "-", "-"
 
-        arcade.draw_text(texto_pos, 920, 300, arcade.color.WHITE, 12, bold=True)
-        arcade.draw_text(texto_adelante, 920, 270, arcade.color.GREEN, 12)
-        arcade.draw_text(texto_atras, 920, 240, arcade.color.RED, 12)
+        arcade.draw_text(texto_pos, cx - 130, cy + 15, arcade.color.WHITE, 11, bold=True)
+        arcade.draw_text(texto_adelante, cx - 130, cy - 15, arcade.color.GREEN, 10)
+        arcade.draw_text(texto_atras, cx - 130, cy - 45, arcade.color.RED, 10)
